@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using ErrorManager.Properties;
@@ -11,14 +12,16 @@ namespace ErrorManager
 {
     public class StaticLogger
     {
+        #region Synchrone logging
         public static void Log(Exception ex)
         {
             ExecuteWrite(ex);
         }
 
-        public static void Log<T>(string message, T exception) where T: Exception
+        public static void Log<T>(string message) where T : Exception
         {
-            var ex = Activator.CreateInstance<T>();
+            var innerEx = Activator.CreateInstance<T>();
+            var ex = new Exception(message, innerEx);
             ExecuteWrite(ex);
         }
 
@@ -27,38 +30,41 @@ namespace ErrorManager
             var ex = new Exception(message);
             ExecuteWrite(ex);
         }
+        #endregion
 
+        #region asynchrone logging
         public static async Task LogAsync(Exception ex)
         {
-            using (StreamWriter stream = new StreamWriter(Settings.Default.LogFilePath))
-            {
-                var errorMessage = CreateMessage(ex);
-                ExecuteWrite(ex);
-            }
+            var errorMessage = CreateMessage(ex);
+            await ExecuteWrite(ex, true);
         }
 
-        public static void LogAsync<T>(string message, T exception) where T : Exception
+        public static async Task LogAsync<T>(string message) where T : Exception
         {
-            var ex = Activator.CreateInstance<T>();
-            ExecuteWrite(ex);
+            var innerEx = Activator.CreateInstance<T>();
+            var ex = new Exception(message, innerEx);
+            await ExecuteWrite(ex, true);
         }
 
-        public static void Log(string message)
+        public static async Task LogAsync(string message)
         {
             var ex = new Exception(message);
-            ExecuteWrite(ex);
+            await ExecuteWrite(ex, true);
         }
+        #endregion
 
-        private static void ExecuteWrite(Exception ex, bool isAsync = false)
+        private static async Task ExecuteWrite(Exception ex, bool isAsync = false)
         {
-            using (StreamWriter stream = new StreamWriter(GetLogFilePath(ex.Source)))
+            var fileStream = GetLogFilePath();
+            fileStream.Position = fileStream.Length <= 0 ? 0 : fileStream.Length;
+            using (StreamWriter stream = new StreamWriter(fileStream))
             {
                 var errorMessage = CreateMessage(ex);
                 try
                 {
                     if (isAsync)
                     {
-                        stream.WriteLineAsync(errorMessage);
+                        await stream.WriteLineAsync(errorMessage);
                     }
                     else
                     {
@@ -74,21 +80,26 @@ namespace ErrorManager
 
         private static string CreateMessage(Exception ex)
         {
+            var t = ex.GetType(); ;
             StringBuilder sb = new StringBuilder();
+            sb.AppendLine("------------------------------------------------");
             sb.AppendLine("Error" + ex.GetType() + ": " + DateTime.Now);
-            sb.AppendLine("   --> Mesage: " + ex.Message);
+            sb.AppendLine("   --> Message: " + ex.Message);
             sb.AppendLine("   --> from: " + ex.TargetSite);
-            sb.AppendLine("   --> InnerException: " + ex.Message);
+            if (ex.InnerException != null)
+            {
+                sb.AppendLine("   --> InnerException: " + ex.InnerException.Message);
+            }
             sb.AppendLine("   --> StackTrace: " + ex.StackTrace);
 
             return sb.ToString();
         }
 
-        private static FileStream GetLogFilePath(string appName)
+        private static FileStream GetLogFilePath()
         {
-            var path = Settings.Default.LogFilePath;
-            path += appName ?? "defaultAppName";
-            path += ".txt";
+            var path = Settings.Default.LogFilePath + "\\";
+            path += Assembly.GetEntryAssembly().GetName().Name ?? "defaultAppName";
+            path += "Log.txt";
             return File.OpenWrite(path);
         }
     }
